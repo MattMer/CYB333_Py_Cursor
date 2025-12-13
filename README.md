@@ -33,9 +33,13 @@ A comprehensive security automation tool that automatically maps Windows Securit
     - Full technique documentation
 
 - **Intelligent Caching**:
+  - Automatically creates local cache directory on first run
   - Caches Sigma rule mappings locally to reduce API calls
   - Caches MITRE ATT&CK technique details for faster subsequent runs
+  - Caches full MITRE ATT&CK Enterprise framework dataset
   - Configurable cache directory (default: `~/.mitre_mapper_cache`)
+  - Supports offline operation after initial cache creation
+  - `--refresh` flag to force cache rebuild from GitHub
 
 - **Comprehensive Reporting**:
   - Generates enriched CSV reports with all original event data plus MITRE mappings
@@ -96,9 +100,14 @@ python mitre_mapper_windows.py --max-events 1000
 python mitre_mapper_windows.py --cache-dir ./my_cache
 ```
 
+**Force refresh of Sigma rules from GitHub**:
+```bash
+python mitre_mapper_windows.py --refresh
+```
+
 **Complete example with all options**:
 ```bash
-python mitre_mapper_windows.py --csv events.csv --output report.csv --cache-dir ./cache --max-events 5000
+python mitre_mapper_windows.py --csv events.csv --output report.csv --cache-dir ./cache --max-events 5000 --refresh
 ```
 
 #### Command-Line Arguments
@@ -109,6 +118,7 @@ python mitre_mapper_windows.py --csv events.csv --output report.csv --cache-dir 
 | `--output` | No | `report.csv` | Path to the CSV output report. |
 | `--cache-dir` | No | `~/.mitre_mapper_cache` | Directory to cache Sigma rules and ATT&CK data. |
 | `--max-events` | No | All events | Maximum number of events to process from Event Log. |
+| `--refresh` | No | False | Force refresh of Sigma rules from GitHub, ignoring existing cache. |
 
 #### Output Format
 
@@ -126,6 +136,53 @@ The generated CSV report includes the following columns:
 - `severity` - Severity level (critical, high, medium, low, informational)
 - `description` - Detailed description of the technique
 - `raw_message` - Original event message/description
+
+#### Local Cache System
+
+The script automatically creates and maintains a local cache directory to improve performance and reduce API calls. The cache is created on first run and persists between executions.
+
+**Cache Location**:
+- **Default**: `~/.mitre_mapper_cache` (user's home directory)
+- **Custom**: Specify with `--cache-dir` option
+
+**Cache Files**:
+The cache directory contains three main files:
+
+1. **`sigma_rules.json`**:
+   - Contains Event ID to MITRE ATT&CK technique mappings extracted from Sigma rules
+   - Structure: `{"event_id_mappings": {"4625": [{"technique_id": "T1110.001", "level": "medium", ...}], ...}}`
+   - Includes metadata: severity level, rule title, description, author, references, status, date
+   - Built by fetching and parsing Sigma rules from GitHub (only `builtin` and `security` subdirectories)
+   - Automatically merged with fallback hardcoded rules
+
+2. **`attack_techniques.json`**:
+   - Contains detailed MITRE ATT&CK technique information
+   - Structure: `{"T1110.001": {"technique_name": "...", "tactic": "...", "description": "..."}, ...}`
+   - Populated on-demand as techniques are encountered
+   - Includes tactic associations extracted from kill chain phases
+
+3. **`enterprise-attack.json`**:
+   - Full MITRE ATT&CK Enterprise framework dataset (STIX format)
+   - Downloaded from MITRE's official repository on first run
+   - Used by `mitreattack-python` library for technique lookups
+
+**Cache Behavior**:
+- **First Run**: Cache directory is created automatically. Sigma rules are fetched from GitHub and MITRE ATT&CK data is downloaded.
+- **Subsequent Runs**: Cache is loaded automatically if valid. No network requests needed unless `--refresh` is used.
+- **Refresh**: Use `--refresh` flag to force re-fetch of Sigma rules from GitHub (existing cache is backed up first).
+- **Empty Cache**: If cache file exists but is empty (0 mappings), rules are automatically re-fetched.
+- **Fallback Rules**: Six hardcoded baseline rules are always merged into the cache to ensure basic coverage.
+
+**Cache Benefits**:
+- Faster startup times (no network requests on subsequent runs)
+- Works offline after initial setup
+- Reduces GitHub API rate limit consumption
+- Preserves rule mappings even if GitHub is temporarily unavailable
+
+**Cache Management**:
+- Cache persists indefinitely until manually deleted or refreshed
+- To clear cache: Delete the cache directory or use `--refresh` to rebuild
+- Cache backup: When using `--refresh`, existing cache is automatically backed up to `.json.backup`
 
 #### Example Output
 
@@ -149,7 +206,7 @@ The generated CSV report includes the following columns:
 - Python 3.7+
 - Windows OS (for Event Log reading) or Windows Event Log CSV exports
 - Administrator privileges (for direct Event Log access)
-- Internet connection (for initial Sigma rules and MITRE ATT&CK data download)
+- Internet connection (for initial cache creation; subsequent runs work offline)
 
 #### Dependencies
 
@@ -158,6 +215,7 @@ See `requirements.txt` for complete list:
 - `pyyaml>=6.0` - Sigma rule parsing
 - `requests>=2.31.0` - HTTP requests for rule fetching
 - `pywin32>=306` - Windows Event Log access (Windows only)
+- `python-dotenv>=1.0.0` - Environment variable management for GitHub token support
 
 #### Troubleshooting
 
@@ -174,6 +232,13 @@ See `requirements.txt` for complete list:
 - Verify your events contain Event IDs that match known MITRE techniques
 - Check that the rule engine loaded successfully (look for cache messages)
 - Some Event IDs may not have corresponding MITRE mappings
+
+**GitHub API rate limit exceeded**:
+- Unauthenticated requests are limited to 60/hour
+- Create a `.env` file in the project directory with: `GITHUB_TOKEN=your_token_here`
+- With a token, rate limit increases to 5,000/hour
+- Use `--refresh` flag to force re-fetch when rate limit resets
+- Cache allows offline operation after initial setup
 
 ---
 

@@ -20,17 +20,16 @@ Usage example:
     python mitre_mapper_windows.py --output report.csv
 """
 
-import argparse # for command line arguments
-import csv # for CSV data
-import json # for JSON data
-import os # for environment variables
-import shutil # for file operations
-import yaml # for YAML data
-from pathlib import Path # for file paths
-from typing import Dict, Any, Iterable, List, Optional # for type hints
-from datetime import datetime # for date and time
-import requests # for HTTP requests
-# Load .env file from script's directory
+import argparse
+import csv
+import json
+import os
+import shutil
+import yaml
+from pathlib import Path
+from typing import Dict, Any, Iterable, List, Optional
+from datetime import datetime
+import requests
 def _load_env_file_manual(env_path: Path) -> bool:
     """
     Manually parse .env file and set environment variables.
@@ -44,7 +43,7 @@ def _load_env_file_manual(env_path: Path) -> bool:
             return False
         
         loaded = False
-        with open(env_path, 'r', encoding='utf-8-sig') as f:  # utf-8-sig handles BOM
+        with open(env_path, 'r', encoding='utf-8-sig') as f:
             for line in f:
                 line = line.strip()
                 # Skip empty lines and comments
@@ -72,38 +71,31 @@ def _load_env_file_manual(env_path: Path) -> bool:
     except Exception:
         return False
 
-# Get the directory where this script is located
 script_dir = Path(__file__).parent.absolute()
 env_path = script_dir / ".env"
 
 try:
-    from dotenv import load_dotenv  # pyright: ignore[reportMissingImports] # for .env file support
-    # Try loading from script directory first
+    from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
     if env_path.exists():
-        # Use dotenv_path parameter (works in python-dotenv >= 0.10.0)
         load_dotenv(dotenv_path=str(env_path), override=True)
     else:
-        # Fallback: try current directory (load_dotenv searches upward by default)
         load_dotenv(override=True)
 except ImportError:
-    # dotenv is optional, will use manual parsing below
     pass
 
-# Always try manual parsing as fallback (handles cases where load_dotenv fails silently)
-# This ensures the token is loaded even if load_dotenv() has issues
 if env_path.exists():
     _load_env_file_manual(env_path)
+
 try:
-    from mitreattack.stix20 import MitreAttackData # for MITRE ATT&CK data
+    from mitreattack.stix20 import MitreAttackData
 except ImportError:
-    # Fallback for older versions
     MitreAttackData = None
 
 try:
-    import win32evtlog # for Windows Event Log
-    import win32evtlogutil # for Windows Event Log utilities
-    import win32security # for Windows security
-    import win32con # for Windows constants
+    import win32evtlog
+    import win32evtlogutil
+    import win32security
+    import win32con
     WINDOWS_EVENT_LOG_AVAILABLE = True
 except ImportError:
     WINDOWS_EVENT_LOG_AVAILABLE = False
@@ -114,9 +106,9 @@ except ImportError:
 # -----------------------------
 
 # Event Log constants
-EVENT_ID_MASK = 0xFFFF  # Mask to extract lower 16 bits of Event ID
-DEFAULT_LOG_NAME = "Security" # default log name
-DEFAULT_SOURCE = "windows_security" # default source
+EVENT_ID_MASK = 0xFFFF
+DEFAULT_LOG_NAME = "Security"
+DEFAULT_SOURCE = "windows_security"
 
 # Severity constants
 SEVERITY_ORDER_DICT = {
@@ -128,9 +120,8 @@ SEVERITY_ORDER_DICT = {
 }
 SEVERITY_ORDER_LIST = ["critical", "high", "medium", "low", "informational"]
 DEFAULT_SEVERITY = "medium"
-DEFAULT_SEVERITY_INDEX = 2  # Index for "medium" in severity order
+DEFAULT_SEVERITY_INDEX = 2
 
-# Rule ID prefix
 RULE_ID_PREFIX = "sigma_"
 
 # Event type mappings
@@ -142,18 +133,26 @@ EVENT_TYPE_MAP = {
     16: "Audit Failure"
 }
 
-# Event Log read flags (Windows only)
 if WINDOWS_EVENT_LOG_AVAILABLE:
-    EVENTLOG_READ_FLAGS = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ # event log read flags
+    EVENTLOG_READ_FLAGS = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
 else:
-    EVENTLOG_READ_FLAGS = None # event log read flags
+    EVENTLOG_READ_FLAGS = None
 
 # -----------------------------
 # Dynamic Rule Engine Configuration
 # -----------------------------
 
-SIGMA_RULES_REPO = "https://api.github.com/repos/SigmaHQ/sigma/contents/rules/windows" # Sigma rules repository
-SIGMA_RAW_BASE = "https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows" # Sigma raw base
+SIGMA_RULES_REPO = "https://api.github.com/repos/SigmaHQ/sigma/contents/rules/windows"
+
+
+def _clean_token(token: str) -> str:
+    """Remove quotes and brackets from token value."""
+    token = token.strip()
+    if token.startswith('[') and token.endswith(']'):
+        token = token[1:-1].strip()
+    if (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
+        token = token[1:-1].strip()
+    return token
 
 
 def get_github_token() -> Optional[str]:
@@ -167,27 +166,15 @@ def get_github_token() -> Optional[str]:
     Returns:
         GitHub token string if found, None otherwise
     """
-    # Try GITHUB_TOKEN first (most common)
     token = os.getenv("GITHUB_TOKEN")
     if token:
-        token = token.strip()
-        # Remove common formatting issues (quotes, brackets)
-        if token.startswith('[') and token.endswith(']'):
-            token = token[1:-1].strip()
-        if (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
-            token = token[1:-1].strip()
+        token = _clean_token(token)
         if token:
             return token
     
-    # Try GITHUB_PAT as alternative
     token = os.getenv("GITHUB_PAT")
     if token:
-        token = token.strip()
-        # Remove common formatting issues (quotes, brackets)
-        if token.startswith('[') and token.endswith(']'):
-            token = token[1:-1].strip()
-        if (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
-            token = token[1:-1].strip()
+        token = _clean_token(token)
         if token:
             return token
     
@@ -337,23 +324,7 @@ class DynamicRuleEngine:
                 print("[*] Using GitHub token for API requests (increased rate limit)")
             else:
                 print("[*] No GitHub token found - using unauthenticated requests (60/hour limit)")
-                # Show where we're looking for .env file
-                script_dir = Path(__file__).parent.absolute()
-                env_path = script_dir / ".env"
-                print(f"[*] Looking for .env file at: {env_path}")
-                if not env_path.exists():
-                    print(f"[!] .env file not found at {env_path}")
-                    print("[*] To increase limit to 5,000/hour, create .env file with: GITHUB_TOKEN=your_token")
-                else:
-                    # Debug: check what's actually in the environment
-                    env_token = os.getenv("GITHUB_TOKEN", "")
-                    env_pat = os.getenv("GITHUB_PAT", "")
-                    print(f"[!] .env file found but GITHUB_TOKEN not set or empty")
-                    print(f"[*] Environment check - GITHUB_TOKEN: {'set' if env_token else 'not set'}, GITHUB_PAT: {'set' if env_pat else 'not set'}")
-                    if env_token:
-                        print(f"[*] GITHUB_TOKEN value length: {len(env_token)}, starts with: {env_token[:5]}...")
-                    print("[*] Ensure .env file contains (no quotes, no brackets): GITHUB_TOKEN=your_token_here")
-                    print("[*] Example: GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                print("[*] To increase limit to 5,000/hour, create .env file with: GITHUB_TOKEN=your_token")
             
             # Check rate limit before starting
             rate_limit_info = check_github_rate_limit(headers)
@@ -445,7 +416,6 @@ class DynamicRuleEngine:
                         directories_to_process.append(item_name)
                         print(f"[*] Found relevant directory: {item_name}")
                     elif item_type == "file" and item_name.endswith(".yml"):
-                        # Also check root directory for any YAML files (unlikely but possible)
                         item["relative_path"] = item_name
                         yaml_files.append(item)
             
@@ -549,13 +519,10 @@ class DynamicRuleEngine:
                     status = rule_data.get("status", "")
                     date = rule_data.get("date", "")
                     
-                    # Convert date to string if it's a date/datetime object (YAML parsing can create these)
                     if date and not isinstance(date, str):
                         if hasattr(date, 'isoformat'):
-                            # datetime or date object
                             date = date.isoformat()
                         else:
-                            # Fallback: convert to string
                             date = str(date)
                     
                     # Create mappings - store rule metadata with each technique
@@ -655,12 +622,9 @@ class DynamicRuleEngine:
                     cached = json.load(f)
                     if technique_id in cached:
                         cached_details = cached[technique_id]
-                        # If cached entry is missing tactics, we'll refresh it below
-                        # Otherwise, use cached data
                         if cached_details.get("tactic"):
                             self._technique_details[technique_id] = cached_details
                             return cached_details
-                        # If no tactic in cache, continue to refresh it
             except (json.JSONDecodeError, IOError, OSError, KeyError):
                 pass
         
@@ -708,7 +672,6 @@ class DynamicRuleEngine:
                                 phase_name = None
                                 kill_chain_name = None
                                 
-                                # Handle both dict and object formats
                                 if isinstance(phase, dict):
                                     phase_name = phase.get("phase_name", "")
                                     kill_chain_name = phase.get("kill_chain_name", "")
@@ -716,7 +679,6 @@ class DynamicRuleEngine:
                                     phase_name = getattr(phase, "phase_name", "")
                                     kill_chain_name = getattr(phase, "kill_chain_name", "")
                                 
-                                # Only process mitre-attack kill chain phases
                                 if kill_chain_name == "mitre-attack" and phase_name:
                                     readable_tactic = tactic_map.get(phase_name.lower(), phase_name.title())
                                     if readable_tactic and readable_tactic not in tactic_names_set:
@@ -725,15 +687,13 @@ class DynamicRuleEngine:
                     except (AttributeError, KeyError, TypeError):
                         pass
                     
-                    # Method 2: Use get_tactics_by_technique (uses relationships internally)
-                    # This supplements kill chain phases and may find additional tactic associations
+                    # Method 2: Use get_tactics_by_technique
                     if not tactics:
                         try:
                             tactic_objects = self.attack_data.get_tactics_by_technique(technique.id)
                             if tactic_objects:
                                 for tactic_entry in tactic_objects:
                                     tactic_name = None
-                                    # Handle RelationshipEntry format: {"object": tactic_obj, "relationships": [...]}
                                     if isinstance(tactic_entry, dict):
                                         if "object" in tactic_entry:
                                             tactic_obj = tactic_entry["object"]
@@ -744,7 +704,6 @@ class DynamicRuleEngine:
                                         elif "name" in tactic_entry:
                                             tactic_name = tactic_entry["name"]
                                     elif hasattr(tactic_entry, "id"):
-                                        # Direct tactic object
                                         tactic_name = self.attack_data.get_name(tactic_entry.id)
                                     elif hasattr(tactic_entry, "name"):
                                         tactic_name = tactic_entry.name
@@ -838,23 +797,17 @@ class DynamicRuleEngine:
             tech_id = rule_info["technique_id"]
             tech_details = self._get_technique_details(tech_id)
             
-            # Prefer Sigma rule description if available, otherwise use technique description
             sigma_description = rule_info.get("description", "").strip()
             technique_description = tech_details.get("description", "").strip()
-            # Combine descriptions: Sigma rule description is more specific, technique description is more general
             if sigma_description and technique_description:
                 description = f"{sigma_description}\n\nTechnique: {technique_description}"
             else:
                 description = sigma_description if sigma_description else technique_description
             
-            # Use technique name from ATT&CK, but note Sigma rule title for context
-            technique_name = tech_details.get("technique_name", "").strip()
-            sigma_title = rule_info.get("title", "").strip()
-            
             rules.append({
                 "technique_id": tech_id,
-                "technique_name": technique_name,
-                "sigma_title": sigma_title,  # Sigma rule title for reference
+                "technique_name": tech_details.get("technique_name", "").strip(),
+                "sigma_title": rule_info.get("title", "").strip(),
                 "tactic": tech_details.get("tactic", ""),
                 "severity": rule_info.get("level", DEFAULT_SEVERITY),
                 "description": description,
@@ -1042,7 +995,7 @@ def parse_windows_csv(path: str) -> Iterable[Dict[str, Any]]:
                 "user": user,
                 "source": DEFAULT_SOURCE,
                 "raw_message": raw_message,
-                "original_row": row,  # for future use if needed
+                "original_row": row,
             }
 
 
@@ -1075,9 +1028,8 @@ def apply_rules(event: Dict[str, Any], rule_engine: DynamicRuleEngine) -> Dict[s
     If no rule matches, ATT&CK fields remain blank.
     If multiple rules match, uses the first one (highest severity preferred).
     """
-    enriched = dict(event)  # shallow copy
+    enriched = dict(event)
     
-    # Only process Windows Security events
     if event.get("source") != DEFAULT_SOURCE:
         enriched.update(_create_empty_enrichment())
         return enriched
@@ -1094,13 +1046,11 @@ def apply_rules(event: Dict[str, Any], rule_engine: DynamicRuleEngine) -> Dict[s
         enriched.update(_create_empty_enrichment())
         return enriched
     
-    # Sort by severity (critical > high > medium > low > informational)
     rules.sort(key=lambda r: SEVERITY_ORDER_DICT.get(
         r.get("severity", DEFAULT_SEVERITY).lower(),
         DEFAULT_SEVERITY_INDEX
     ))
     
-    # Use the highest severity rule
     matched_rule = rules[0]
     
     enriched["rule_id"] = f"{RULE_ID_PREFIX}{event_id}_{matched_rule.get('technique_id', '')}"
@@ -1149,9 +1099,8 @@ def write_csv_report(events: Iterable[Dict[str, Any]], output_path: str) -> Dict
             row = {field: e.get(field, "") for field in REPORT_FIELDS}
             writer.writerow(row)
             
-            # Track severity counts (only for events with MITRE mappings)
             severity = e.get("severity", "").strip().lower()
-            if severity:  # Only count if severity is present (has MITRE mapping)
+            if severity:
                 severity_counts[severity] = severity_counts.get(severity, 0) + 1
     
     return severity_counts
@@ -1160,6 +1109,16 @@ def write_csv_report(events: Iterable[Dict[str, Any]], output_path: str) -> Dict
 # -----------------------------
 # CLI entry point
 # -----------------------------
+
+def _handle_privilege_error() -> None:
+    """Print user-friendly message for privilege errors."""
+    print("[!] Error: Insufficient privileges to read Security Event Log.")
+    print("[!] The Security Event Log requires administrator privileges.")
+    print("[!] Options:")
+    print("[!]   1. Run this script as Administrator")
+    print("[!]   2. Use --csv to read from an exported CSV file instead")
+    print("[!]      Example: python mitre_mapper_windows.py --csv events.csv")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -1240,12 +1199,7 @@ Examples:
         except RuntimeError as e:
             error_msg = str(e)
             if "1314" in error_msg or "privilege" in error_msg.lower() or "not held" in error_msg.lower():
-                print("[!] Error: Insufficient privileges to read Security Event Log.")
-                print("[!] The Security Event Log requires administrator privileges.")
-                print("[!] Options:")
-                print("[!]   1. Run this script as Administrator")
-                print("[!]   2. Use --csv to read from an exported CSV file instead")
-                print("[!]      Example: python mitre_mapper_windows.py --csv events.csv")
+                _handle_privilege_error()
             else:
                 print(f"[!] Error reading Event Log: {e}")
                 print("[!] Try using --csv to specify a CSV file instead.")
@@ -1261,12 +1215,7 @@ Examples:
     except RuntimeError as e:
         error_msg = str(e)
         if "1314" in error_msg or "privilege" in error_msg.lower() or "not held" in error_msg.lower():
-            print("[!] Error: Insufficient privileges to read Security Event Log.")
-            print("[!] The Security Event Log requires administrator privileges.")
-            print("[!] Options:")
-            print("[!]   1. Run this script as Administrator")
-            print("[!]   2. Use --csv to read from an exported CSV file instead")
-            print("[!]      Example: python mitre_mapper_windows.py --csv events.csv")
+            _handle_privilege_error()
         else:
             print(f"[!] Error processing events: {e}")
         return
