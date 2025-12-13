@@ -8,7 +8,7 @@ if defined _OLD_CODEPAGE (
     "%SystemRoot%\System32\chcp.com" 65001 > nul
 )
 
-set VIRTUAL_ENV=C:\Users\mgmer\Desktop\CYB333_Py_Cursor\.venv
+set VIRTUAL_ENV=C:\Users\Matt\OneDrive\Documents\0 - SCHOOL\1 CURRENT SEMESTER\1225 - CYB333 SECURITY AUTOMATION\CYB333_Py_Cursor\.venv
 
 if not defined PROMPT set PROMPT=$P$G
 
