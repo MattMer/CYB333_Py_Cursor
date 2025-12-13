@@ -3,15 +3,21 @@
 mitre_mapper_windows.py
 
 Simple security automation tool that:
-- Parses Windows Security event logs exported as CSV from Event Viewer.
+- Reads Windows Security event logs from local system Event Log (default) or CSV file.
 - Normalizes events.
 - Maps selected Event IDs to MITRE ATT&CK tactics/techniques using dynamic rules
   from Sigma rules repository and MITRE ATT&CK API.
 - Writes an enriched CSV report.
 
 Usage example:
-    python mitre_mapper_windows.py --file security.csv --output report.csv
-    python mitre_mapper_windows.py --file security.csv --output report.csv --cache-dir ./cache
+    # Read from Windows Security Event Log (default)
+    python mitre_mapper_windows.py
+    
+    # Read from CSV file
+    python mitre_mapper_windows.py --csv security.csv
+    
+    # Specify output file
+    python mitre_mapper_windows.py --output report.csv
 """
 
 import argparse
@@ -20,12 +26,22 @@ import json
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Iterable, List, Optional
+from datetime import datetime
 import requests
 try:
     from mitreattack.stix20 import MitreAttackData
 except ImportError:
     # Fallback for older versions
     MitreAttackData = None
+
+try:
+    import win32evtlog
+    import win32evtlogutil
+    import win32security
+    import win32con
+    WINDOWS_EVENT_LOG_AVAILABLE = True
+except ImportError:
+    WINDOWS_EVENT_LOG_AVAILABLE = False
 
 
 # -----------------------------
@@ -402,6 +418,126 @@ class DynamicRuleEngine:
 
 
 # -----------------------------
+# Windows Event Log parsing
+# -----------------------------
+
+def parse_windows_event_log(
+    log_name: str = "Security",
+    max_events: Optional[int] = None,
+    event_ids: Optional[List[int]] = None
+) -> Iterable[Dict[str, Any]]:
+    """
+    Parse Windows Event Log directly from the system.
+    
+    Args:
+        log_name: Name of the event log (default: "Security")
+        max_events: Maximum number of events to read (None = all)
+        event_ids: Optional list of Event IDs to filter (None = all)
+    
+    Yields:
+        Dictionary with normalized event data
+    """
+    if not WINDOWS_EVENT_LOG_AVAILABLE:
+        raise ImportError(
+            "pywin32 is required to read Windows Event Log. "
+            "Install it with: pip install pywin32"
+        )
+    
+    try:
+        # Open the event log
+        hand = win32evtlog.OpenEventLog(None, log_name)
+        
+        try:
+            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+            events_read = 0
+            
+            while True:
+                events = win32evtlog.ReadEventLog(hand, flags, 0)
+                if not events:
+                    break
+                
+                for event in events:
+                    # Check max_events limit
+                    if max_events and events_read >= max_events:
+                        return
+                    
+                    event_id = event.EventID & 0xFFFF  # Get lower 16 bits
+                    
+                    # Filter by event IDs if specified
+                    if event_ids and event_id not in event_ids:
+                        continue
+                    
+                    # Format timestamp
+                    try:
+                        timestamp = event.TimeGenerated.Format("%m/%d/%Y %I:%M:%S %p")
+                    except:
+                        timestamp = str(event.TimeGenerated)
+                    
+                    # Get computer name
+                    try:
+                        host = event.ComputerName
+                    except:
+                        host = ""
+                    
+                    # Extract user from event data
+                    user = ""
+                    try:
+                        # Try to get user from event data strings
+                        if event.StringInserts:
+                            for insert in event.StringInserts:
+                                if insert and ("\\" in insert or "@" in insert):
+                                    user = insert
+                                    break
+                    except:
+                        pass
+                    
+                    # Get event message/description
+                    try:
+                        message = win32evtlogutil.SafeFormatMessage(event, log_name)
+                    except:
+                        message = ""
+                    
+                    # Build raw message from available data
+                    raw_message_parts = []
+                    try:
+                        if hasattr(event, "EventCategory") and event.EventCategory:
+                            raw_message_parts.append(f"Category: {event.EventCategory}")
+                        if hasattr(event, "EventType"):
+                            event_type_map = {
+                                1: "Error",
+                                2: "Warning",
+                                4: "Information",
+                                8: "Audit Success",
+                                16: "Audit Failure"
+                            }
+                            event_type = event_type_map.get(event.EventType, "Unknown")
+                            raw_message_parts.append(event_type)
+                        if message:
+                            raw_message_parts.append(message)
+                    except:
+                        pass
+                    
+                    raw_message = " | ".join(raw_message_parts) if raw_message_parts else message
+                    
+                    yield {
+                        "timestamp": timestamp,
+                        "host": host,
+                        "event_id": str(event_id),
+                        "user": user,
+                        "source": "windows_security",
+                        "raw_message": raw_message,
+                    }
+                    
+                    events_read += 1
+                    
+        finally:
+            win32evtlog.CloseEventLog(hand)
+            
+    except Exception as e:
+        raise RuntimeError(f"Error reading Windows Event Log: {e}")
+
+
+# -----------------------------
 # Windows CSV parsing
 # -----------------------------
 
@@ -579,12 +715,25 @@ def write_csv_report(events: Iterable[Dict[str, Any]], output_path: str) -> Dict
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Map Windows Security log events to MITRE ATT&CK techniques using dynamic rules from Sigma repository."
+        description="Map Windows Security log events to MITRE ATT&CK techniques using dynamic rules from Sigma repository.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Read from Windows Security Event Log (default)
+  python mitre_mapper_windows.py
+  
+  # Read from CSV file
+  python mitre_mapper_windows.py --csv security_events.csv
+  
+  # Specify output file
+  python mitre_mapper_windows.py --output my_report.csv
+        """
     )
     parser.add_argument(
-        "--file",
-        required=True,
-        help="Path to the Windows Security log exported as CSV from Event Viewer.",
+        "--csv",
+        required=False,
+        default=None,
+        help="Path to Windows Security log exported as CSV from Event Viewer. If not specified, reads from local system Event Log.",
     )
     parser.add_argument(
         "--output",
@@ -598,6 +747,13 @@ def main() -> None:
         default=None,
         help="Directory to cache Sigma rules and ATT&CK data (default: ~/.mitre_mapper_cache).",
     )
+    parser.add_argument(
+        "--max-events",
+        type=int,
+        required=False,
+        default=None,
+        help="Maximum number of events to process from Event Log (default: all).",
+    )
 
     args = parser.parse_args()
 
@@ -606,10 +762,57 @@ def main() -> None:
     rule_engine = DynamicRuleEngine(cache_dir=args.cache_dir)
     
     # Parse and enrich events
-    print(f"[*] Processing events from {args.file}...")
-    parsed_events = parse_windows_csv(args.file)
-    enriched_events = (apply_rules(e, rule_engine) for e in parsed_events)
-    severity_counts = write_csv_report(enriched_events, args.output)
+    if args.csv:
+        # Read from CSV file
+        print(f"[*] Processing events from CSV file: {args.csv}...")
+        parsed_events = parse_windows_csv(args.csv)
+    else:
+        # Read from Windows Event Log (default)
+        if not WINDOWS_EVENT_LOG_AVAILABLE:
+            print("[!] Error: pywin32 is required to read Windows Event Log.")
+            print("[!] Install it with: pip install pywin32")
+            print("[!] Or use --csv to specify a CSV file instead.")
+            return
+        
+        print("[*] Reading events from Windows Security Event Log...")
+        try:
+            parsed_events = parse_windows_event_log(
+                log_name="Security",
+                max_events=args.max_events
+            )
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "1314" in error_msg or "privilege" in error_msg.lower() or "not held" in error_msg.lower():
+                print("[!] Error: Insufficient privileges to read Security Event Log.")
+                print("[!] The Security Event Log requires administrator privileges.")
+                print("[!] Options:")
+                print("[!]   1. Run this script as Administrator")
+                print("[!]   2. Use --csv to read from an exported CSV file instead")
+                print("[!]      Example: python mitre_mapper_windows.py --csv events.csv")
+            else:
+                print(f"[!] Error reading Event Log: {e}")
+                print("[!] Try using --csv to specify a CSV file instead.")
+            return
+        except Exception as e:
+            print(f"[!] Error reading Event Log: {e}")
+            print("[!] Try using --csv to specify a CSV file instead.")
+            return
+    
+    try:
+        enriched_events = (apply_rules(e, rule_engine) for e in parsed_events)
+        severity_counts = write_csv_report(enriched_events, args.output)
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "1314" in error_msg or "privilege" in error_msg.lower() or "not held" in error_msg.lower():
+            print("[!] Error: Insufficient privileges to read Security Event Log.")
+            print("[!] The Security Event Log requires administrator privileges.")
+            print("[!] Options:")
+            print("[!]   1. Run this script as Administrator")
+            print("[!]   2. Use --csv to read from an exported CSV file instead")
+            print("[!]      Example: python mitre_mapper_windows.py --csv events.csv")
+        else:
+            print(f"[!] Error processing events: {e}")
+        return
 
     print(f"[+] Report written to {args.output}")
     
