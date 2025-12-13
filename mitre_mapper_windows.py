@@ -204,15 +204,15 @@ class DynamicRuleEngine:
                         event_ids.extend([str(eid) for eid in event_id_value])
                     else:
                         event_ids.append(str(event_id_value))
-                elif isinstance(selection_data, list):
-                    # Handle list of maps
-                    for item in selection_data:
-                        if isinstance(item, dict) and "EventID" in item:
-                            event_id_value = item["EventID"]
-                            if isinstance(event_id_value, list):
-                                event_ids.extend([str(eid) for eid in event_id_value])
-                            else:
-                                event_ids.append(str(event_id_value))
+            elif isinstance(selection_data, list):
+                # Handle list of maps
+                for item in selection_data:
+                    if isinstance(item, dict) and "EventID" in item:
+                        event_id_value = item["EventID"]
+                        if isinstance(event_id_value, list):
+                            event_ids.extend([str(eid) for eid in event_id_value])
+                        else:
+                            event_ids.append(str(event_id_value))
         
         return list(set(event_ids))  # Remove duplicates
 
