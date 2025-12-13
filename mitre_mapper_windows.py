@@ -95,13 +95,28 @@ class DynamicRuleEngine:
                 with open(self.sigma_rules_cache, "r", encoding="utf-8") as f:
                     cached = json.load(f)
                     self._event_id_to_techniques = cached.get("event_id_mappings", {})
-                    print(f"[+] Loaded {len(self._event_id_to_techniques)} Event ID mappings from cache")
+                    num_mappings = len(self._event_id_to_techniques)
+                    print(f"[+] Loaded {num_mappings} Event ID mappings from cache")
+                    
+                    # If cache is empty, fetch rules
+                    if num_mappings == 0:
+                        print("[!] Cache is empty, fetching Sigma rules...")
+                        self._fetch_and_parse_sigma_rules()
+                        # Always merge fallback rules as baseline
+                        self._load_fallback_rules()
+                        self._save_rules_cache()
+                    else:
+                        # Always merge fallback rules as baseline
+                        self._load_fallback_rules()
                     return
             except Exception as e:
                 print(f"[!] Error loading cache: {e}, rebuilding...")
         
         print("[*] Fetching Sigma rules from GitHub...")
         self._fetch_and_parse_sigma_rules()
+        
+        # Always merge fallback rules as baseline
+        self._load_fallback_rules()
         
         # Save to cache
         self._save_rules_cache()
@@ -174,8 +189,8 @@ class DynamicRuleEngine:
             
         except Exception as e:
             print(f"[!] Error fetching Sigma rules: {e}")
-            print("[!] Using fallback hardcoded rules")
-            self._load_fallback_rules()
+            print("[!] Using fallback hardcoded rules only")
+            # Fallback rules will be loaded by caller if needed
 
     def _extract_event_ids(self, rule_data: Dict[str, Any]) -> List[str]:
         """Extract Event IDs from a Sigma rule's detection section."""
@@ -331,7 +346,7 @@ class DynamicRuleEngine:
             print(f"[!] Warning: Could not save ATT&CK cache: {e}")
 
     def _load_fallback_rules(self) -> None:
-        """Load fallback hardcoded rules if Sigma rules can't be fetched."""
+        """Load fallback hardcoded rules as baseline (always merged with existing rules)."""
         fallback_rules = [
             {"event_id": "4625", "technique_id": "T1110.001", "level": "medium"},
             {"event_id": "4624", "technique_id": "T1078", "level": "low"},
@@ -345,12 +360,16 @@ class DynamicRuleEngine:
             event_id = rule["event_id"]
             if event_id not in self._event_id_to_techniques:
                 self._event_id_to_techniques[event_id] = []
-            self._event_id_to_techniques[event_id].append({
-                "technique_id": rule["technique_id"],
-                "level": rule["level"],
-                "title": "",
-                "description": ""
-            })
+            
+            # Check if this technique already exists for this event ID
+            tech_id = rule["technique_id"]
+            if not any(r.get("technique_id") == tech_id for r in self._event_id_to_techniques[event_id]):
+                self._event_id_to_techniques[event_id].append({
+                    "technique_id": tech_id,
+                    "level": rule["level"],
+                    "title": "",
+                    "description": ""
+                })
 
     def get_rules_for_event(self, event_id: str) -> List[Dict[str, Any]]:
         """
@@ -530,13 +549,28 @@ REPORT_FIELDS = [
 ]
 
 
-def write_csv_report(events: Iterable[Dict[str, Any]], output_path: str) -> None:
+def write_csv_report(events: Iterable[Dict[str, Any]], output_path: str) -> Dict[str, int]:
+    """
+    Write events to CSV report and return severity counts.
+    
+    Returns:
+        Dictionary mapping severity levels to counts
+    """
+    severity_counts: Dict[str, int] = {}
+    
     with open(output_path, mode="w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
         writer.writeheader()
         for e in events:
             row = {field: e.get(field, "") for field in REPORT_FIELDS}
             writer.writerow(row)
+            
+            # Track severity counts (only for events with MITRE mappings)
+            severity = e.get("severity", "").strip().lower()
+            if severity:  # Only count if severity is present (has MITRE mapping)
+                severity_counts[severity] = severity_counts.get(severity, 0) + 1
+    
+    return severity_counts
 
 
 # -----------------------------
@@ -575,9 +609,29 @@ def main() -> None:
     print(f"[*] Processing events from {args.file}...")
     parsed_events = parse_windows_csv(args.file)
     enriched_events = (apply_rules(e, rule_engine) for e in parsed_events)
-    write_csv_report(enriched_events, args.output)
+    severity_counts = write_csv_report(enriched_events, args.output)
 
     print(f"[+] Report written to {args.output}")
+    
+    # Print severity summary
+    if severity_counts:
+        print("\n[*] Detection Summary by Severity:")
+        # Define severity order for consistent output
+        severity_order = ["critical", "high", "medium", "low", "informational"]
+        for severity in severity_order:
+            count = severity_counts.get(severity, 0)
+            if count > 0:
+                print(f"    {severity.capitalize()}: {count}")
+        
+        # Print any other severities not in the standard list
+        for severity, count in sorted(severity_counts.items()):
+            if severity not in severity_order:
+                print(f"    {severity.capitalize()}: {count}")
+        
+        total = sum(severity_counts.values())
+        print(f"    Total detections: {total}")
+    else:
+        print("[!] No MITRE ATT&CK detections found in the events")
 
 
 if __name__ == "__main__":
