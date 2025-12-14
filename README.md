@@ -110,6 +110,46 @@ python mitre_mapper_windows.py --refresh
 python mitre_mapper_windows.py --csv events.csv --output report.csv --cache-dir ./cache --max-events 5000 --refresh
 ```
 
+#### Interactive Demo Notebook
+
+A comprehensive Jupyter notebook (`mitre_mapper_demo.ipynb`) is provided to demonstrate the tool's capabilities through an interactive walkthrough. The notebook includes:
+
+**Features**:
+- Step-by-step tutorial on using the MITRE mapper programmatically
+- Visual analysis of enriched events using pandas DataFrames
+- Threat intelligence summaries organized by MITRE ATT&CK tactics and techniques
+- Severity-based prioritization analysis
+- Before/after comparisons showing the value added by enrichment
+- Deep dive into specific MITRE ATT&CK techniques
+- Comprehensive explanations of tool benefits and use cases
+
+**To use the notebook**:
+
+1. **Install Jupyter** (if not already installed):
+   ```bash
+   pip install jupyter pandas
+   ```
+
+2. **Launch Jupyter Notebook**:
+   ```bash
+   jupyter notebook
+   ```
+
+3. **Open the demo notebook**:
+   - Navigate to `mitre_mapper_demo.ipynb` in the Jupyter interface
+   - Execute cells sequentially to follow the interactive walkthrough
+
+**What you'll learn**:
+- How to import and initialize the `DynamicRuleEngine`
+- How to process Windows Security events from CSV files
+- How to analyze enriched events with MITRE ATT&CK context
+- How to generate threat intelligence summaries
+- How to prioritize events by severity
+- How to examine specific attack techniques in detail
+- Understanding the benefits of automated threat intelligence enrichment
+
+The notebook uses the included `TEST_SECURITY_EVENTS.csv` file as sample data, demonstrating the complete workflow from raw Windows events to actionable threat intelligence.
+
 #### Command-Line Arguments
 
 | Argument | Required | Default | Description |
@@ -216,6 +256,10 @@ See `requirements.txt` for complete list:
 - `requests>=2.31.0` - HTTP requests for rule fetching
 - `pywin32>=306` - Windows Event Log access (Windows only)
 - `python-dotenv>=1.0.0` - Environment variable management for GitHub token support
+
+**Optional (for Jupyter notebook)**:
+- `jupyter` - Interactive notebook environment
+- `pandas` - Data analysis and manipulation (used in demo notebook)
 
 #### Troubleshooting
 
