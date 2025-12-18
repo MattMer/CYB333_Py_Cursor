@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Dict, Any, Iterable, List, Optional
 from datetime import datetime
 import requests
+
 def _load_env_file_manual(env_path: Path) -> bool:
     """
     Manually parse .env file and set environment variables.
@@ -71,9 +72,10 @@ def _load_env_file_manual(env_path: Path) -> bool:
     except Exception:
         return False
 
-script_dir = Path(__file__).parent.absolute()
-env_path = script_dir / ".env"
+script_dir = Path(__file__).parent.absolute() # Get the directory of the script.
+env_path = script_dir / ".env" # Get the path to the .env file.
 
+# This block is used to load the .env file and set the environment variables.
 try:
     from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
     if env_path.exists():
@@ -81,16 +83,21 @@ try:
     else:
         load_dotenv(override=True)
 except ImportError:
-    pass
+    # Fallback to manual parser if dotenv not available
+    if env_path.exists():
+        _load_env_file_manual(env_path)
+except Exception:
+    # Fallback if load_dotenv fails for other reasons
+    if env_path.exists():
+        _load_env_file_manual(env_path)
 
-if env_path.exists():
-    _load_env_file_manual(env_path)
-
+# This block is used to import the MitreAttackData class from the mitreattack-python library.
 try:
     from mitreattack.stix20 import MitreAttackData
 except ImportError:
     MitreAttackData = None
 
+# This block is used to import the win32evtlog module and set the WINDOWS_EVENT_LOG_AVAILABLE variable to True.
 try:
     import win32evtlog
     import win32evtlogutil
@@ -106,8 +113,11 @@ except ImportError:
 # -----------------------------
 
 # Event Log constants
+# This is the mask for the event ID.
 EVENT_ID_MASK = 0xFFFF
+# This is the default log name.
 DEFAULT_LOG_NAME = "Security"
+# This is the default source.
 DEFAULT_SOURCE = "windows_security"
 
 # Severity constants
@@ -133,6 +143,7 @@ EVENT_TYPE_MAP = {
     16: "Audit Failure"
 }
 
+# This is the event log read flags.
 if WINDOWS_EVENT_LOG_AVAILABLE:
     EVENTLOG_READ_FLAGS = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
 else:
@@ -142,9 +153,10 @@ else:
 # Dynamic Rule Engine Configuration
 # -----------------------------
 
+# This is the Sigma rules repository URL.
 SIGMA_RULES_REPO = "https://api.github.com/repos/SigmaHQ/sigma/contents/rules/windows"
 
-
+# This function is used to clean the GitHub token in case it contains quotes or brackets.
 def _clean_token(token: str) -> str:
     """Remove quotes and brackets from token value."""
     token = token.strip()
@@ -154,7 +166,7 @@ def _clean_token(token: str) -> str:
         token = token[1:-1].strip()
     return token
 
-
+# This function is used to get the GitHub token from the environment variable or .env file.
 def get_github_token() -> Optional[str]:
     """
     Get GitHub token from environment variable or .env file.
@@ -965,7 +977,17 @@ def parse_windows_csv(path: str) -> Iterable[Dict[str, Any]]:
                 or ""
             )
 
-            event_id = (row.get("Event ID") or row.get("EventID") or "").strip()
+            # Normalize event_id: extract numeric value and apply mask (same as Windows Event Log parser)
+            event_id_raw = (row.get("Event ID") or row.get("EventID") or "").strip()
+            event_id = ""
+            if event_id_raw:
+                try:
+                    # Try to parse as integer and apply mask (same as Windows Event Log)
+                    event_id_int = int(event_id_raw)
+                    event_id = str(event_id_int & EVENT_ID_MASK)
+                except (ValueError, TypeError):
+                    # If not a valid integer, use as-is (but cleaned)
+                    event_id = event_id_raw
 
             host = (
                 row.get("Computer")
